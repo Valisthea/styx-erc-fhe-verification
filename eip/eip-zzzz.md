@@ -1,0 +1,447 @@
+---
+eip: TBD
+title: FHE Computation Verification Interface
+description: An interface for on-chain verification of FHE computation correctness via recursive zero-knowledge proofs.
+author: Valisthea (@Valisthea)
+discussions-to: https://ethereum-magicians.org/
+status: Draft
+type: Standards Track
+category: ERC
+created: 2026-04-13
+requires: 165
+---
+
+## Abstract
+
+This EIP defines an interface for **on-chain verification of Fully Homomorphic Encryption (FHE) computation**. When a smart contract executes logic on encrypted data, external observers cannot inspect the computation. This EIP provides a mechanism for anyone to verify that the encrypted computation was performed correctly — without learning anything about the encrypted inputs, outputs, or intermediate values.
+
+The EIP specifies how FHE circuits are registered, how recursive zero-knowledge proofs of correct execution are submitted and verified on-chain, and how verified results are consumed by dependent contracts. A single compact proof (≤ 1 KB) attests to arbitrarily complex encrypted computations via Incrementally Verifiable Computation (IVC) proof folding.
+
+This is the trust layer that makes blind computation trustless.
+
+## Motivation
+
+FHE enables computation on encrypted data. But computation alone is not enough — you need **verification**. Without verification, an FHE co-processor (the node performing the encrypted computation) could return arbitrary results. The user cannot check the output because it's encrypted. The contract cannot check because it never sees plaintext.
+
+This creates a fundamental trust problem:
+
+1. **Co-processor honesty** — FHE computation is delegated to specialized hardware (GPUs, FPGAs, ASICs). These co-processors are external to the EVM. Without verification, you must trust the co-processor operator — defeating the purpose of decentralization.
+
+2. **Result integrity** — When an encrypted DeFi vault computes "does this position exceed the liquidation threshold?", the answer must be provably correct. A malicious co-processor could return `false` to protect a friendly whale from liquidation, or `true` to force-liquidate a competitor.
+
+3. **Composability** — When Contract A consumes the output of Contract B's encrypted computation, Contract A needs assurance that B's computation was correct. Without a verification interface, each contract pair must implement custom trust assumptions.
+
+4. **Auditability** — Regulators and auditors need to verify that encrypted financial computations (tax calculations, compliance checks, solvency proofs) were performed correctly, without seeing the underlying data.
+
+5. **Multi-party computation chains** — In complex DeFi protocols, encrypted outputs of one computation become inputs to the next. Errors compound. Verification at each step prevents cascading failures.
+
+### Why not just trust the FHE node?
+
+For the same reason we don't trust Ethereum validators to execute transactions correctly — we verify. The entire value proposition of blockchain is trustless execution. FHE without verification is just encrypted cloud computing with extra steps. This EIP brings FHE computation into the trustless paradigm.
+
+### Why recursive proofs?
+
+FHE operations are expensive. A single encrypted multiplication can involve thousands of polynomial operations. Proving each operation individually would produce proofs larger than the computation itself. Recursive proof composition (IVC — Incrementally Verifiable Computation) folds N operation proofs into a single constant-size proof. One 256-byte SNARK attests to an entire encrypted program execution. Verified in O(1) on-chain.
+
+## Specification
+
+The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "SHOULD NOT", "RECOMMENDED", "NOT RECOMMENDED", "MAY", and "OPTIONAL" in this document are to be interpreted as described in RFC 2119 and RFC 8174.
+
+### Definitions
+
+- **Circuit**: A deterministic program compiled from encrypted contract logic into a sequence of FHE gates (ADD, MUL, CMP, MUX). Each circuit has a unique hash identifying its structure.
+- **Gate**: A single FHE operation — the atomic unit of encrypted computation.
+- **Execution Trace**: The ordered sequence of gates executed during a specific invocation of a circuit.
+- **Execution Proof**: A zero-knowledge proof attesting that a specific execution trace is a valid execution of a registered circuit on specific inputs, producing specific outputs.
+- **IVC Folding**: The process of combining gate-level proofs into a single constant-size proof. Each gate's proof is folded into the accumulator, producing a running proof that grows by zero bytes per gate.
+- **Verification Key**: A public key specific to a circuit. Used to verify execution proofs. Generated during circuit compilation.
+- **Co-processor**: The off-chain entity performing the FHE computation and generating the execution proof. Untrusted by design.
+- **Result Commitment**: A Poseidon hash of the encrypted output of a computation.
+- **executionId**: A unique identifier for each execution, computed on-chain as `keccak256(circuitHash || inputCommitment || resultCommitment || msg.sender || block.number)`.
+
+### Verification Flow
+
+```
+    Developer writes encrypted contract (SSL, fhEVM Solidity, etc.)
+                          │
+                          ▼
+              ┌───────────────────────┐
+              │   Circuit Compiler    │  (off-chain)
+              └───────────────────────┘
+                          │
+              Produces: circuitHash, verificationKey, gateCount
+                          │
+                          ▼
+              ┌───────────────────────┐
+              │   registerCircuit()   │  ← stores keccak256(verificationKey) on-chain
+              └───────────────────────┘
+                          │
+                          │  User submits encrypted transaction
+                          ▼
+              ┌───────────────────────┐
+              │    FHE Co-processor   │  ← untrusted off-chain computation
+              │  executes circuit     │
+              │  generates IVC proof  │
+              └───────────────────────┘
+                          │
+              Produces: proof, resultCommitment, verificationKey
+                          │
+                          ▼
+              ┌───────────────────────┐
+              │   submitProof()       │  ← verifies key hash, computes executionId on-chain
+              └───────────────────────┘
+                          │
+                    ┌──────┴──────┐
+                    │             │
+                 VALID         INVALID
+                    │             │
+                    ▼             ▼
+            executionId        revert
+            stored on-chain
+                    │
+                    ▼
+              ┌───────────────────────┐
+              │  Dependent contracts  │  ← consume via isResultVerified()
+              └───────────────────────┘
+```
+
+### Interface
+
+Every compliant contract MUST implement the following interface:
+
+```solidity
+// SPDX-License-Identifier: CC0-1.0
+pragma solidity >=0.8.0;
+
+interface IERCZZZZ {
+
+    struct CircuitInfo {
+        bytes32 circuitHash;
+        bytes32 verificationKeyHash;  // keccak256(verificationKey) — stored on-chain
+        address registrant;
+        uint256 gateCount;
+        uint256 registeredAt;
+        uint256 currentVersion;
+        bool active;
+        bytes4 schemeId;              // FHE scheme as bytes4 (not string)
+    }
+
+    struct ExecutionResult {
+        bytes32 executionId;          // Computed on-chain — not provided by caller
+        bytes32 circuitHash;
+        bytes32 inputCommitment;
+        bytes32 resultCommitment;
+        bytes32 proofHash;
+        address prover;
+        uint256 verifiedAt;
+        bool verified;
+        bool disputed;
+    }
+
+    // ─── Errors ──────────────────────────────────────
+
+    error CircuitAlreadyRegistered(bytes32 circuitHash);
+    error CircuitNotRegistered(bytes32 circuitHash);
+    error CircuitNotActive(bytes32 circuitHash);
+    error ProofVerificationFailed(bytes32 executionId, bytes32 circuitHash);
+    error ExecutionAlreadySubmitted(bytes32 executionId);
+    error VerificationKeyHashMismatch(bytes32 circuitHash, bytes32 provided, bytes32 stored);
+    error InvalidInputCommitment(bytes32 executionId);
+    error GateCountExceedsLimit(uint256 gateCount, uint256 maxGates);
+    error UnauthorizedCircuitRegistrant(address caller);
+    error CircuitInGracePeriod(bytes32 circuitHash, uint256 deactivatesAt);
+    error ExecutionNotVerified(bytes32 executionId);
+    error ExecutionAlreadyDisputed(bytes32 executionId);
+
+    // ─── Events ──────────────────────────────────────
+
+    event CircuitRegistered(
+        bytes32 indexed circuitHash,
+        address indexed registrant,
+        uint256 gateCount,
+        bytes32 verificationKeyHash
+    );
+
+    event CircuitUpgraded(
+        bytes32 indexed circuitHash,
+        uint256 previousVersion,
+        uint256 newVersion,
+        bytes32 newVerificationKeyHash
+    );
+
+    event CircuitDeactivating(
+        bytes32 indexed circuitHash,
+        address indexed deactivatedBy,
+        uint256 deactivatesAt
+    );
+
+    event ExecutionVerified(
+        bytes32 indexed executionId,
+        bytes32 indexed circuitHash,
+        address indexed prover,
+        bytes32 resultCommitment
+    );
+
+    event ExecutionRejected(
+        bytes32 indexed executionId,
+        bytes32 indexed circuitHash,
+        address indexed prover
+    );
+
+    event ResultDisputed(
+        bytes32 indexed executionId,
+        address indexed challenger,
+        bytes32 counterProofHash
+    );
+
+    // ─── Circuit Registry ────────────────────────────
+
+    /// @notice Register a circuit. Stores keccak256(verificationKey) — not the key itself.
+    function registerCircuit(
+        bytes32 circuitHash,
+        bytes32 verificationKeyHash,
+        uint256 gateCount,
+        bytes4 schemeId
+    ) external;
+
+    /// @notice Register a verification key upgrade for an existing circuit.
+    function registerCircuitUpgrade(
+        bytes32 circuitHash,
+        bytes32 newVerificationKeyHash
+    ) external;
+
+    function latestCircuitVersion(bytes32 circuitHash) external view returns (uint256);
+
+    /// @notice Schedule deactivation with a grace period.
+    /// @param  gracePeriod  Seconds before deactivation takes effect.
+    function deactivateCircuit(bytes32 circuitHash, uint256 gracePeriod) external;
+
+    function circuitInfo(bytes32 circuitHash) external view returns (CircuitInfo memory);
+    function isCircuitActive(bytes32 circuitHash) external view returns (bool);
+
+    // ─── Proof Submission ─────────────────────────────
+
+    /// @notice Submit a proof for verification.
+    /// @dev    Verification key supplied here and checked: keccak256(verificationKey) == stored hash.
+    ///         executionId is computed on-chain:
+    ///           keccak256(circuitHash || inputCommitment || resultCommitment || msg.sender || block.number)
+    ///         Freshness check: |proof.timestamp - block.timestamp| MUST be <= maxTimestampDrift().
+    /// @return executionId  The on-chain computed identifier. Emitted in ExecutionVerified.
+    function submitProof(
+        bytes32 circuitHash,
+        bytes32 inputCommitment,
+        bytes32 resultCommitment,
+        bytes calldata verificationKey,
+        bytes calldata proof
+    ) external returns (bytes32 executionId);
+
+    function submitProofBatch(
+        bytes32[] calldata circuitHashes,
+        bytes32[] calldata inputCommitments,
+        bytes32[] calldata resultCommitments,
+        bytes[] calldata verificationKeys,
+        bytes[] calldata proofs
+    ) external returns (bytes32[] memory executionIds);
+
+    /// @notice Dispute a verified result with a counter-proof.
+    function disputeResult(bytes32 executionId, bytes calldata counterProof) external;
+
+    // ─── Queries ─────────────────────────────────────
+
+    function isResultVerified(bytes32 executionId) external view returns (bool);
+    function isDisputed(bytes32 executionId) external view returns (bool);
+    function executionResult(bytes32 executionId) external view returns (ExecutionResult memory);
+    function verifiedResultCommitment(bytes32 executionId) external view returns (bytes32);
+    function verifyResultProvenance(
+        bytes32 executionId,
+        bytes32 circuitHash,
+        bytes32 inputCommitment,
+        bytes32 resultCommitment
+    ) external view returns (bool);
+
+    // ─── Configuration ───────────────────────────────
+
+    function maxGateCount() external view returns (uint256);
+    function maxProofSize() external view returns (uint256);
+    function maxTimestampDrift() external view returns (uint256);
+
+    /// @notice Returns the supported proof system as bytes4 (not string).
+    ///         0x4e6f7661 = "Nova", 0x48616c32 = "Hal2", 0x534e6f76 = "SNov"
+    function proofSystemId() external view returns (bytes4);
+}
+```
+
+### [ERC-165](./eip-165.md) Interface Detection
+
+Compliant contracts MUST implement [ERC-165](./eip-165.md) and return `true` for the `IERCZZZZ` interface ID.
+
+### Optional Extension: Prover Registry
+
+```solidity
+interface IERCZZZZ_ProverRegistry is IERCZZZZ {
+
+    event ProverRegistered(address indexed prover, uint256 stake);
+
+    event ProverSlashed(
+        address indexed prover,
+        uint256 amount,
+        bytes32 indexed executionId,
+        address indexed challenger
+    );
+
+    /// @notice Emitted when a challenger earns their reward from a successful dispute.
+    event ChallengerRewarded(
+        address indexed challenger,
+        uint256 reward,
+        bytes32 indexed executionId
+    );
+
+    function registerProver() external payable;
+    function proverInfo(address prover) external view returns (ProverInfo memory);
+    function isProverActive(address prover) external view returns (bool);
+
+    /// @notice Slash a prover. Challenger receives challengerRewardBps() of the slash.
+    function slashProver(address prover, bytes32 executionId, address challenger) external;
+
+    function challengerRewardBps() external view returns (uint256);
+    function minProverStake() external view returns (uint256);
+}
+```
+
+### Optional Extension: Computation Chaining
+
+```solidity
+interface IERCZZZZ_Chaining is IERCZZZZ {
+
+    event ChainVerified(bytes32[] executionChain, bytes32 finalResultCommitment);
+
+    function isChainedExecution(bytes32 executionA, bytes32 executionB) external view returns (bool);
+    function verifyExecutionChain(bytes32[] calldata executionChain) external view returns (bool);
+}
+```
+
+### Proof Public Inputs
+
+The execution proof MUST encode the following public inputs:
+
+```
+executionPublicInputs = {
+    chainId:           uint256,    // EIP-155 chain ID
+    contractAddress:   address,    // Verifier contract address
+    executionId:       bytes32,    // On-chain computed (circuitHash||inputCmt||resultCmt||sender||block)
+    circuitHash:       bytes32,    // Circuit that was executed
+    inputCommitment:   bytes32,    // Poseidon hash of encrypted inputs
+    resultCommitment:  bytes32,    // Poseidon hash of encrypted outputs
+    proverAddress:     address,    // Co-processor address — binds proof to prover identity
+    gateCount:         uint256,    // Number of gates executed
+    proofSystemId:     bytes4,     // Proof system (bytes4, not string)
+    timestamp:         uint256     // Block timestamp — MUST satisfy freshness check
+                                   // |timestamp - block.timestamp| <= maxTimestampDrift()
+}
+```
+
+**Freshness check**: Implementations MUST verify that `|proof.timestamp - block.timestamp| <= maxTimestampDrift()`. Stale proofs generated in a previous block context MUST be rejected to prevent replay of outdated computation attestations.
+
+**Prover binding**: The `proverAddress` field binds the proof to `msg.sender`. A proof generated by prover A cannot be submitted by prover B.
+
+### IVC Folding Requirements
+
+1. Each FHE gate produces a gate-level statement: "gate G with encrypted inputs (a, b) produced encrypted output c"
+2. The IVC accumulator folds each gate proof into a running proof
+3. The final proof is a single constant-size SNARK attesting to the entire trace
+4. Proof size MUST NOT exceed `maxProofSize()` (RECOMMENDED: 1024 bytes)
+5. Verification gas cost MUST be O(1) regardless of circuit complexity
+
+Implementations SHOULD use:
+- **Nova** (Relaxed R1CS folding) — RECOMMENDED for gate-level IVC
+- **Halo2** (IPA-based recursive composition)
+- **SuperNova** (multi-circuit IVC folding)
+
+### Commitment Scheme
+
+```
+inputCommitment  = Poseidon(encryptedInput_1 || ... || encryptedInput_n)
+resultCommitment = Poseidon(encryptedOutput_1 || ... || encryptedOutput_m)
+```
+
+## Rationale
+
+### Why store only verificationKeyHash on-chain?
+
+Verification keys can be hundreds of KB. Storing them on-chain is prohibitively expensive. Storing only `keccak256(verificationKey)` (32 bytes) is sufficient: the full key is supplied at proof-submission time and verified against the stored hash. This reduces registration cost by 99%+ while preserving integrity.
+
+### Why compute executionId on-chain?
+
+Allowing callers to provide their own `executionId` enables front-running and ID squatting attacks: an attacker could pre-submit a fake record for a valid execution ID before the legitimate prover, causing the real submission to revert. Computing `executionId = keccak256(circuitHash || inputCommitment || resultCommitment || msg.sender || block.number)` on-chain removes this attack surface entirely.
+
+### Why disputeResult?
+
+Initial on-chain verification uses a compact proof system optimized for speed. A sophisticated adversary with access to a broken implementation of the proof system could generate a proof that passes verification but is computationally incorrect. `disputeResult` allows a challenger to submit a counter-proof that demonstrates the incorrectness. This creates an economic game: provers stake collateral that can be slashed if their result is successfully disputed.
+
+### Why proverAddress in public inputs?
+
+Without binding the proof to the prover's address, a prover could generate a valid proof and another party could submit it first (front-running), claiming the verification credit and any associated rewards. Including `proverAddress = msg.sender` in the public inputs makes the proof non-transferable.
+
+### Why registerCircuitUpgrade?
+
+Circuits may need to be updated (bug fixes, efficiency improvements, new FHE scheme). The upgrade mechanism allows the verification key to be updated while preserving the circuit's identity and historical results. Historical proofs remain verifiable under the version they were submitted with.
+
+### Why gracePeriod in deactivateCircuit?
+
+Immediate deactivation would break in-flight computations: a co-processor executing a circuit that gets deactivated between execution start and proof submission would have their work invalidated. The grace period (RECOMMENDED: 24 hours) allows all in-flight computations to complete before the circuit stops accepting new proofs.
+
+### Why proofSystemId as bytes4 instead of string?
+
+String comparison is gas-expensive and error-prone (encoding differences, trailing spaces). `bytes4` allows constant-gas comparison and fits in a single storage slot alongside other config values. Well-known identifiers (`0x4e6f7661` for Nova, etc.) can be maintained in an off-chain registry.
+
+### Why a challenger reward?
+
+Without economic incentive, no one would bother challenging incorrect results. The challenger reward (a percentage of the slashed stake) creates a profitable market for result verification, ensuring any incorrect computation is quickly identified and disputed.
+
+## Backwards Compatibility
+
+This EIP introduces entirely new functionality. It has no backwards compatibility concerns with existing ERCs.
+
+This EIP REQUIRES [ERC-165](./eip-165.md) for interface detection.
+
+## Reference Implementation
+
+A reference implementation is provided in the STYX Protocol repository (`Valisthea/styx-erc-fhe-verification`):
+
+- **StyxVerifier.sol**: On-chain IVC proof verification (Halo2 backend)
+- **StyxCircuitRegistry.sol**: Circuit registration and upgrade management
+- **StyxProverRegistry.sol**: Co-processor staking, slashing, and challenger rewards
+
+## Security Considerations
+
+### Verification Key Substitution
+
+If an attacker replaces a circuit's verification key hash, they can generate valid proofs for arbitrary computations. Implementations MUST restrict `registerCircuit()` and `registerCircuitUpgrade()` to authorized parties. Verification key hashes MUST be immutable except through explicit upgrade calls.
+
+### Proof Malleability
+
+Some proof systems allow transforming a valid proof into another valid proof for the same statement. This does not affect correctness but can affect uniqueness. Implementations SHOULD use non-malleable proof systems, or derive the `proofHash` in a malleable-resistant way.
+
+### Co-processor Denial of Service
+
+A malicious co-processor could refuse to generate proofs, halting encrypted computation. The Prover Registry extension mitigates this through multiple competing provers. Implementations SHOULD support multiple provers per circuit.
+
+### Freshness and Replay Attacks
+
+The timestamp freshness check (`|proof.timestamp - block.timestamp| <= maxTimestampDrift()`) prevents proofs generated in outdated contexts from being submitted. Without this check, a prover could generate a proof at time T for computation state at T, but submit it at T+1000 when the circuit or inputs have changed.
+
+### Gas Cost Attacks
+
+Proof verification is gas-intensive. Implementations SHOULD require prover registration (with stake) and SHOULD charge a submission fee refunded on successful verification to deter spam.
+
+### Recursive Proof Soundness
+
+The security of IVC folding depends on the underlying proof system's soundness. Implementations SHOULD use well-audited implementations (Nova, Halo2) and SHOULD NOT use experimental folding schemes in production.
+
+### Chain Reorganization
+
+A verified execution could be reverted by chain reorganization. Dependent contracts SHOULD wait for 64 block confirmations before treating a result as final.
+
+## Copyright
+
+Copyright and related rights waived via [CC0](../LICENSE.md).

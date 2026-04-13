@@ -3,7 +3,7 @@ eip: TBD
 title: FHE Computation Verification Interface
 description: An interface for on-chain verification of FHE computation correctness via recursive zero-knowledge proofs.
 author: Valisthea (@Valisthea)
-discussions-to: https://ethereum-magicians.org/
+discussions-to: https://ethereum-magicians.org/t/erc-fhe-computation-verification-standard-trustless-verification-of-encrypted-computation-via-recursive-zk-proofs/28217
 status: Draft
 type: Standards Track
 category: ERC

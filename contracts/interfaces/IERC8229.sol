@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: CC0-1.0
 pragma solidity >=0.8.0;
 
-/// @title ERC-ZZZZ FHE Computation Verification Interface
+/// @title ERC-8229 FHE Computation Verification Interface
 /// @author Valisthea (@Valisthea)
 /// @notice Interface for on-chain verification of FHE computation correctness
 ///         via recursive zero-knowledge proofs (IVC).
 
-interface IERCZZZZ {
+interface IERC8229 {
 
     // ─── Types ───────────────────────────────────────
 

@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: CC0-1.0
 pragma solidity >=0.8.0;
 
-import "./IERCZZZZ.sol";
+import "./IERC8229.sol";
 
-/// @title ERC-ZZZZ Computation Chaining Extension
+/// @title ERC-8229 Computation Chaining Extension
 /// @author Valisthea (@Valisthea)
 /// @notice Enables verified composition of encrypted computations.
 ///         For multi-step FHE pipelines where the output of one computation
 ///         is the input of the next.
-interface IERCZZZZ_Chaining is IERCZZZZ {
+interface IERC8229_Chaining is IERC8229 {
 
     /// @notice Emitted when a chained execution is verified.
     event ChainVerified(

@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: CC0-1.0
 pragma solidity >=0.8.0;
 
-import "./IERCZZZZ.sol";
+import "./IERC8229.sol";
 
-/// @title ERC-ZZZZ Prover Registry Extension
+/// @title ERC-8229 Prover Registry Extension
 /// @author Valisthea (@Valisthea)
 /// @notice Tracks co-processor reputation, stake, and slashing.
 ///         For networks with multiple competing co-processors.
-interface IERCZZZZ_ProverRegistry is IERCZZZZ {
+interface IERC8229_ProverRegistry is IERC8229 {
 
     struct ProverInfo {
         address prover;

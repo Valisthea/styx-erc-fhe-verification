@@ -1,8 +1,12 @@
-# ERC-ZZZZ: FHE Computation Verification Interface
+# ERC-8229: FHE Computation Verification
+
+**Canonical proposal:** [ethereum/ERCs#1682](https://github.com/ethereum/ERCs/pull/1682) · **Discussion:** [Ethereum Magicians](https://ethereum-magicians.org/t/erc-8229-fhe-computation-verification/28217)
+
+The authoritative text is the one in the pull request; this repository is a working mirror.
 
 > On-chain verification of FHE computation correctness via recursive zero-knowledge proofs.
 
-**Status:** Draft · **Author:** [@Valisthea](https://github.com/Valisthea) · **Created:** 2026-04-13 · **Requires:** ERC-165
+**Status:** Draft · **Author:** [@Valisthea](https://github.com/Valisthea) · **Created:** 2026-04-17 · **Requires:** ERC-165
 
 ---
 
@@ -32,7 +36,7 @@ This standard defines how FHE circuits are registered, how recursive IVC proofs 
 ## Core Interface
 
 ```solidity
-interface IERCZZZZ {
+interface IERC8229 {
     // Circuit management
     function registerCircuit(bytes32 circuitHash, bytes32 verificationKeyHash, uint256 gateCount, bytes4 schemeId) external;
     function registerCircuitUpgrade(bytes32 circuitHash, bytes32 newVerificationKeyHash) external;
@@ -64,9 +68,9 @@ styx-erc-fhe-verification/
 │   └── eip-zzzz.md                        # Official EIP draft
 ├── contracts/
 │   └── interfaces/
-│       ├── IERCZZZZ.sol                   # Core interface (all OMEGA fixes)
-│       ├── IERCZZZZ_ProverRegistry.sol    # Prover staking, slashing + challenger reward
-│       └── IERCZZZZ_Chaining.sol          # Multi-step computation pipeline verification
+│       ├── IERC8229.sol                   # Core interface (all OMEGA fixes)
+│       ├── IERC8229_ProverRegistry.sol    # Prover staking, slashing + challenger reward
+│       └── IERC8229_Chaining.sol          # Multi-step computation pipeline verification
 ├── docs/
 │   └── verification-flow.md
 ├── test/
